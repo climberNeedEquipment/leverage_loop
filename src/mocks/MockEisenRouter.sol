@@ -74,13 +74,13 @@ contract MockEisenRouter {
 
         uint256 amountOut;
         if (amountIn == 0) {
-          // If amountIn is zero, then amountOut is also zero.
-          amountOut = 0;
+            // If amountIn is zero, then amountOut is also zero.
+            amountOut = 0;
         } else {
-          // For mock, ensure amountOut is always positive if amountIn is positive.
-          // This bypasses complex rate calculations for now and ensures the swap "succeeds".
-          amountOut = amountIn / 2; // Arbitrary small but non-zero output for mock success
-          require(amountOut > 0, "Mock swap resulted in zero output");
+            // For mock, ensure amountOut is always positive if amountIn is positive.
+            // This bypasses complex rate calculations for now and ensures the swap "succeeds".
+            amountOut = amountIn / 2; // Arbitrary small but non-zero output for mock success
+            require(amountOut > 0, "Mock swap resulted in zero output");
         }
 
         // Mint tokenOut to caller (which is LeverageLoop contract)

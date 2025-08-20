@@ -411,7 +411,9 @@ export class EisenMockApi {
     }
 
     // Fallback to static mock prices
-    const staticPrice = EisenMockApi.MOCK_PRICES.get(tokenAddress.toLowerCase());
+    const staticPrice = EisenMockApi.MOCK_PRICES.get(
+      tokenAddress.toLowerCase()
+    );
     if (staticPrice !== undefined) {
       return staticPrice;
     }

@@ -120,12 +120,24 @@ describe("Hardhat Mock Tests - Leverage and Deleverage", function () {
 
     // Fund mock Aave pool with WETH and USDC
     await weth.mint(deployer.address, ethers.parseEther("1000")); // Mint some WETH to deployer to fund pool
-    await weth.approve(await mockAavePool.getAddress(), ethers.parseEther("1000"));
+    await weth.approve(
+      await mockAavePool.getAddress(),
+      ethers.parseEther("1000")
+    );
     await mockAavePool.fund(await weth.getAddress(), ethers.parseEther("1000"));
 
-    await usdc.mint(deployer.address, ethers.parseUnits("1000000", USDC_DECIMALS)); // Mint some USDC to deployer to fund pool
-    await usdc.approve(await mockAavePool.getAddress(), ethers.parseUnits("1000000", USDC_DECIMALS));
-    await mockAavePool.fund(await usdc.getAddress(), ethers.parseUnits("1000000", USDC_DECIMALS));
+    await usdc.mint(
+      deployer.address,
+      ethers.parseUnits("1000000", USDC_DECIMALS)
+    ); // Mint some USDC to deployer to fund pool
+    await usdc.approve(
+      await mockAavePool.getAddress(),
+      ethers.parseUnits("1000000", USDC_DECIMALS)
+    );
+    await mockAavePool.fund(
+      await usdc.getAddress(),
+      ethers.parseUnits("1000000", USDC_DECIMALS)
+    );
 
     // Fund user with initial WETH
     await weth.mint(user.address, ethers.parseEther("10")); // 10 WETH
@@ -168,13 +180,17 @@ describe("Hardhat Mock Tests - Leverage and Deleverage", function () {
     const targetLeverage = 2.0; // 2x leverage
 
     // Simulate initial supply of collateral by the user
-    await weth.connect(user).approve(await mockAavePool.getAddress(), initialCollateralAmount);
-    await mockAavePool.connect(user).supply(
-      await weth.getAddress(),
-      initialCollateralAmount,
-      user.address,
-      0
-    );
+    await weth
+      .connect(user)
+      .approve(await mockAavePool.getAddress(), initialCollateralAmount);
+    await mockAavePool
+      .connect(user)
+      .supply(
+        await weth.getAddress(),
+        initialCollateralAmount,
+        user.address,
+        0
+      );
 
     // Simulate initial borrow of USDC by the user
     const initialBorrowAmount = ethers.parseUnits("1000", USDC_DECIMALS); // Borrow 1000 USDC initially
@@ -242,7 +258,10 @@ describe("Hardhat Mock Tests - Leverage and Deleverage", function () {
     // Approve additional collateral for supply
     await weth
       .connect(user)
-      .approve(await mockAavePool.getAddress(), additionalCollateralForLeverage);
+      .approve(
+        await mockAavePool.getAddress(),
+        additionalCollateralForLeverage
+      );
 
     // Approve debt token for credit delegation
     await vUSDC
@@ -273,7 +292,11 @@ describe("Hardhat Mock Tests - Leverage and Deleverage", function () {
       targetDeLeverage,
       ethers.parseEther("0.0008")
     );
-    console.log(`Calculated deleverage flashloanAmount: ${ethers.formatEther(delevData.flashloanAmount)} WETH`);
+    console.log(
+      `Calculated deleverage flashloanAmount: ${ethers.formatEther(
+        delevData.flashloanAmount
+      )} WETH`
+    );
 
     const deleverageSwapPathData =
       await EisenMockApi.buildLeverageSwapDataFromQuote(
