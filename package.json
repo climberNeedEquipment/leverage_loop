@@ -1,0 +1,26 @@
+{
+  "name": "leverage_loop-hardhat",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "hardhat compile",
+    "test": "hardhat test --network hardhat",
+    "test:fork:soneium": "hardhat test hh/test/fork/soneium.fork.test.ts --network hardhat",
+    "test:fork:multi": "TEST_NETWORKS=base,soneium hardhat test hh/test/fork/multi-network.fork.test.ts --network hardhat",
+    "test:fork:all": "ts-node hh/scripts/run-fork-tests.ts",
+    "test:leverage": "hardhat test hh/test/leverage.deleverage.fork.ts --network hardhat"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.10",
+    "solady": "^0.1.24",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "ethers": "^6.13.2"
+  }
+}
