@@ -18,8 +18,41 @@ contract MockEisenRouter {
     address public defaultTokenIn;
     address public defaultTokenOut;
 
+    // Debug state variables
+    address public lastTokenIn;
+    address public lastTokenOut;
+    uint256 public lastAmountIn;
+    uint256 public lastRNum;
+    uint256 public lastRDen;
+    uint256 public lastAmountOut;
+
     function _key(address a, address b) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(a, b));
+    }
+
+    // Explicit getter functions for debugging
+    function getLastTokenIn() external view returns (address) {
+        return lastTokenIn;
+    }
+
+    function getLastTokenOut() external view returns (address) {
+        return lastTokenOut;
+    }
+
+    function getLastAmountIn() external view returns (uint256) {
+        return lastAmountIn;
+    }
+
+    function getLastRNum() external view returns (uint256) {
+        return lastRNum;
+    }
+
+    function getLastRDen() external view returns (uint256) {
+        return lastRDen;
+    }
+
+    function getLastAmountOut() external view returns (uint256) {
+        return lastAmountOut;
     }
 
     function setDefaultPair(address tokenIn, address tokenOut) external {
@@ -72,16 +105,8 @@ contract MockEisenRouter {
         // No actual transferFrom from sender to router for mock
         // The LeverageLoop contract handles transferring the tokens to the router
 
-        uint256 amountOut;
-        if (amountIn == 0) {
-            // If amountIn is zero, then amountOut is also zero.
-            amountOut = 0;
-        } else {
-            // For mock, ensure amountOut is always positive if amountIn is positive.
-            // This bypasses complex rate calculations for now and ensures the swap "succeeds".
-            amountOut = amountIn / 2; // Arbitrary small but non-zero output for mock success
-            require(amountOut > 0, "Mock swap resulted in zero output");
-        }
+        uint256 amountOut = (amountIn * r.num) / r.den;
+        require(amountOut > 0, "Mock swap resulted in zero output");
 
         // Mint tokenOut to caller (which is LeverageLoop contract)
         MockERC20Mintable(tokenOut).mint(msg.sender, amountOut);

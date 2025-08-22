@@ -85,25 +85,43 @@ export class EisenMockApi {
     mainnet: 1,
   };
 
-  // Mock price data for testing (in USD)
-  private static readonly MOCK_PRICES: Map<string, number> = new Map([
-    ["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE".toLowerCase(), 3500], // ETH native
-    ["0x4200000000000000000000000000000000000006".toLowerCase(), 3500], // WETH (Base)
-    ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase(), 1], // USDC (Base)
-    ["0xA0b86a33E6441214e4b1dA6e1aF99f3e55C0E797".toLowerCase(), 1], // USDC (Soneium)
-    ["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".toLowerCase(), 3500], // WETH (Ethereum)
-    ["0x6B175474E89094C44Da98b954EedeAC495271d0F".toLowerCase(), 1], // DAI (Ethereum)
+  // Mock price data for testing (in USD), scaled to 1e18 precision
+  private static readonly MOCK_PRICES: Map<string, bigint> = new Map([
+    [
+      "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE".toLowerCase(),
+      ethers.parseEther("3500"),
+    ], // ETH native
+    [
+      "0x4200000000000000000000000000000000000006".toLowerCase(),
+      ethers.parseEther("3500"),
+    ], // WETH (Base)
+    [
+      "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase(),
+      ethers.parseEther("1"),
+    ], // USDC (Base)
+    [
+      "0xA0b86a33E6441214e4b1dA6e1aF99f3e55C0E797".toLowerCase(),
+      ethers.parseEther("1"),
+    ], // USDC (Soneium)
+    [
+      "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".toLowerCase(),
+      ethers.parseEther("3500"),
+    ], // WETH (Ethereum)
+    [
+      "0x6B175474E89094C44Da98b954EedeAC495271d0F".toLowerCase(),
+      ethers.parseEther("1"),
+    ], // DAI (Ethereum)
   ]);
 
   // This map can be used to set dynamic mock prices for tests.
-  private static prices: Map<string, number> = new Map();
+  private static prices: Map<string, bigint> = new Map();
 
   public static setMockPrices(pricesMap: Map<string, number>): void {
-    // Ensure all incoming keys are lowercased for consistency
+    // Ensure all incoming keys are lowercased and values are converted to BigInt with 1e18 precision
     EisenMockApi.prices = new Map(
       Array.from(pricesMap.entries()).map(([key, value]) => [
         key.toLowerCase(),
-        value,
+        ethers.parseEther(value.toString()), // Convert number to BigInt and scale to 1e18
       ])
     );
   }
@@ -176,20 +194,23 @@ export class EisenMockApi {
     const amountIn = BigInt(request.fromAmount);
     const priceIn = this.getMockPrice(request.fromToken);
     const priceOut = this.getMockPrice(request.toToken);
-    const slippage = parseFloat(request.slippage || "0.005"); // Default 0.5% slippage
+    const slippageBps = BigInt(
+      Math.floor(parseFloat(request.slippage || "0.005") * 10000)
+    ); // Slippage in basis points (e.g., 50 for 0.5%)
 
-    // Calculate estimated output amount
-    const baseOutput =
-      (amountIn * BigInt(Math.floor(priceIn * 1000))) /
-      BigInt(Math.floor(priceOut * 1000));
-    const slippageAmount =
-      (baseOutput * BigInt(Math.floor(slippage * 10000))) / BigInt(10000);
+    // Calculate estimated output amount based on prices
+    // Output = (Input_Amount * Input_Price) / Output_Price
+    const baseOutput = (amountIn * priceIn) / priceOut;
+
+    // Calculate slippage amount
+    const slippageAmount = (baseOutput * slippageBps) / 10000n; // 10000 bps = 100%
     const estimatedAmount = baseOutput - slippageAmount;
 
     // Generate swap bytes using the appropriate method
     const swapBytes = this.buildSwapBytesFromQuote(request, estimatedAmount);
 
     // Calculate price impact (mock)
+    // Price Impact = (Slippage_Amount / Base_Output) * 100
     const priceImpact = (
       (Number(slippageAmount) / Number(baseOutput)) *
       100
@@ -403,7 +424,7 @@ export class EisenMockApi {
   /**
    * Get mock price for a token (used for testing)
    */
-  static getMockPrice(tokenAddress: string): number {
+  static getMockPrice(tokenAddress: string): bigint {
     // Check dynamic prices first
     const dynamicPrice = EisenMockApi.prices.get(tokenAddress.toLowerCase());
     if (dynamicPrice !== undefined) {
@@ -421,7 +442,7 @@ export class EisenMockApi {
     console.warn(
       `[EisenMockApi] No specific mock price found for ${tokenAddress}. Returning default 3500.`
     );
-    return 3500; // Default price (e.g., for unknown tokens)
+    return ethers.parseEther("3500"); // Default price (e.g., for unknown tokens)
   }
 
   /**

@@ -80,73 +80,58 @@ export class LeverageCalculator {
     } else if (priceOfCollateral && priceOfDebt) {
       // price of collateral and price of debt are provided
       // Calculate the flashloan amount needed to achieve the target leverage
-      // The formula aims to achieve: (Current Debt + Flashloan Amount) * PriceOfDebt / (Current Collateral + Converted Flashloan Amount) / PriceOfCollateral = Target LTV
 
-      // All values are scaled to EXP18 (1e18) for consistent arithmetic
-      const scaledPriceOfCollateral = priceOfCollateral;
-      const scaledPriceOfDebt = priceOfDebt;
-      const scaledFlashloanPremium = flashloanPremium;
-      const scaledInitialCollateralAmount = initialCollateralAmount;
-      const scaledInitialDebtAmount = initialDebtAmount;
-      const scaledCollateralAmount = collateralAmount; // New collateral being supplied
+      const scaledPriceOfCollateral = priceOfCollateral; // Already EXP18 scaled
+      const scaledPriceOfDebt = priceOfDebt; // Already EXP18 scaled
+      const scaledFlashloanPremium = flashloanPremium; // Already EXP18 scaled
 
-      // Total collateral after initial supply and new supply
-      const totalCollateralAfterSupply =
-        scaledInitialCollateralAmount + scaledCollateralAmount;
+      // Convert initial amounts to EXP18-scaled values for arithmetic with prices
+      const flashloanDebtValueNeeded =
+        ((targetLeverageBigInt - EXP18) *
+          (collateralAmount + initialCollateralAmount) *
+          priceOfCollateral *
+          debtDecimalsBigInt) /
+        priceOfDebt /
+        EXP18 /
+        collateralDecimalsBigInt;
 
-      // Target Debt based on target leverage and total collateral (after new supply)
-      // Target LTV = 1 - (1 / Target Leverage)
-      const targetLTV = EXP18 - (EXP18 * EXP18) / targetLeverageBigInt;
-
-      // The amount of debt we can sustain with the new collateral + current collateral
-      const maximumSustainableDebt =
-        (totalCollateralAfterSupply * scaledPriceOfCollateral * targetLTV) /
-        (scaledPriceOfDebt * EXP18);
-
-      // Flashloaned debt amount is the difference between max sustainable debt and current debt
-      const calculatedFlashloanDebtAmount =
-        maximumSustainableDebt - scaledInitialDebtAmount;
-
-      // Ensure calculatedFlashloanDebtAmount is not negative, it might be if initial debt is too high or target leverage too low
-      if (calculatedFlashloanDebtAmount < 0) {
+      if (flashloanDebtValueNeeded < 0) {
         throw new Error(
-          "Calculated flashloan debt amount is negative. Adjust initial parameters or target leverage."
+          "Calculated flashloan debt value is negative. Target leverage is too low or initial debt too high for a leverage operation."
         );
       }
 
-      // Convert flashloaned debt amount to equivalent collateral amount for flashloan
-      const flashloanAmount =
-        (calculatedFlashloanDebtAmount * scaledPriceOfDebt) /
-        scaledPriceOfCollateral; // This is the amount of collateral to flashloan (in collateral token terms)
+      // Convert flashloan debt value to actual borrow asset amount (native decimals)
+      const calculatedFlashloanCollateralAmount =
+        (flashloanDebtValueNeeded *
+          scaledPriceOfDebt *
+          collateralDecimalsBigInt) /
+        (scaledPriceOfCollateral * debtDecimalsBigInt);
 
-      // Adjust flashloan amount for premium
+      // Adjust flashloan amount for premium (premium is on the borrowed amount)
       const flashloanAmountWithPremium =
-        flashloanAmount +
-        (calculatedFlashloanDebtAmount * scaledFlashloanPremium) / EXP18; // Premium in collateral terms
+        (flashloanDebtValueNeeded * (EXP18 + scaledFlashloanPremium)) / EXP18;
 
-      // Calculate new LTV based on the new state
-      const newTotalCollateral = totalCollateralAfterSupply + flashloanAmount; // Total collateral after swap
-      const newTotalDebt =
-        scaledInitialDebtAmount +
-        calculatedFlashloanDebtAmount +
-        (calculatedFlashloanDebtAmount * scaledFlashloanPremium) / EXP18; // Total debt after borrow and premium
-
-      const ltv =
-        (newTotalDebt * scaledPriceOfDebt * EXP18) /
-        (newTotalCollateral * scaledPriceOfCollateral); // LTV using full amounts
+      // Calculate new total collateral and debt for post-leverage display (in native decimals)
+      const newCollateralFromSwapAmount = calculatedFlashloanCollateralAmount;
 
       const postLeverageCollateralAmount =
         initialCollateralAmount +
         collateralAmount +
-        (priceOfDebt * flashloanAmount * debtDecimalsBigInt) /
-          priceOfCollateral /
-          collateralDecimalsBigInt;
+        newCollateralFromSwapAmount;
       const postLeverageDebtAmount =
-        initialDebtAmount +
-        ((EXP18 + flashloanPremium) * flashloanAmount) / EXP18;
+        initialDebtAmount + flashloanDebtValueNeeded;
+
+      // Recalculate LTV for display after all operations
+      const finalTotalCollateralValue =
+        (postLeverageCollateralAmount * scaledPriceOfCollateral) /
+        collateralDecimalsBigInt;
+      const finalTotalDebtValue =
+        (postLeverageDebtAmount * scaledPriceOfDebt) / debtDecimalsBigInt;
+      const ltv = (finalTotalDebtValue * EXP18) / finalTotalCollateralValue; // LTV calculation using final values
 
       return {
-        flashloanAmount: flashloanAmountWithPremium, // Return the flashloan amount including premium
+        flashloanAmount: flashloanDebtValueNeeded, // Return the flashloan amount including premium
         ltv,
         collateralAmount: postLeverageCollateralAmount,
         debtAmount: postLeverageDebtAmount,
@@ -171,13 +156,13 @@ export class LeverageCalculator {
     priceOfDebt: bigint | undefined, // decimals 18
     collateralDecimals: number,
     debtDecimals: number,
-    targetDeLeverage: number,
+    targetDeLeverage: number, // Ratio from 0.0 to 1.0 (e.g., 0.5 for 50% reduction)
     flashloanPremium: bigint
   ): CalculatedDeleverageData {
     const EXP18 = ethers.parseEther("1");
     const targetDeLeverageBigInt = ethers.parseEther(
       targetDeLeverage.toString()
-    );
+    ); // This is interpreted as a percentage of debt to reduce
     const collateralDecimalsBigInt = 10n ** BigInt(collateralDecimals);
     const debtDecimalsBigInt = 10n ** BigInt(debtDecimals);
 
@@ -185,20 +170,31 @@ export class LeverageCalculator {
       // convert collateral amount and convert debt amount are provided
       // Use amounts directly in calculations (inverse price correlation)
 
-      const flashloanAmount = convertCollateralAmount;
+      const flashloanAmount = convertCollateralAmount; // Flashloan collateral to convert to debt for repayment
 
-      const ltv =
-        ((initialDebtAmount - convertDebtAmount) *
-          convertCollateralAmount *
-          EXP18 *
-          EXP18) /
-        ((initialCollateralAmount * EXP18 -
-          (EXP18 + flashloanPremium) * convertCollateralAmount) *
-          convertDebtAmount);
       const postDeleverageCollateralAmount =
-        initialCollateralAmount -
-        ((EXP18 + flashloanPremium) * convertCollateralAmount) / EXP18;
-      const postDeleverageDebtAmount = initialDebtAmount - convertDebtAmount;
+        initialCollateralAmount - convertCollateralAmount; // User's collateral decreases by converted amount
+      const postDeleverageDebtAmount = initialDebtAmount - convertDebtAmount; // User's debt decreases by converted amount
+
+      // Ensure amounts are not negative
+      if (postDeleverageCollateralAmount < 0 || postDeleverageDebtAmount < 0) {
+        throw new Error("Deleverage results in negative collateral or debt.");
+      }
+
+      // Recalculate LTV for display based on new amounts (using assumed conversion ratio)
+      // This calculation is tricky without explicit prices, assuming convertDebtAmount / convertCollateralAmount is the implied ratio
+      const impliedPriceRatio =
+        (convertDebtAmount * EXP18) / convertCollateralAmount; // Borrow asset per collateral asset in EXP18
+
+      const currentCollateralValue =
+        (initialCollateralAmount * impliedPriceRatio) / EXP18; // Value in borrow asset terms
+      const currentDebtValue = initialDebtAmount;
+
+      const newCollateralValue =
+        (postDeleverageCollateralAmount * impliedPriceRatio) / EXP18;
+      const newDebtValue = postDeleverageDebtAmount;
+
+      const ltv = (newDebtValue * EXP18) / newCollateralValue; // LTV using value terms
 
       return {
         flashloanAmount,
@@ -208,53 +204,46 @@ export class LeverageCalculator {
       } as CalculatedDeleverageData;
     } else if (priceOfCollateral && priceOfDebt) {
       // price of collateral and price of debt are provided
-      // All values are scaled to EXP18 (1e18) for consistent arithmetic
-      const scaledPriceOfCollateral = priceOfCollateral;
-      const scaledPriceOfDebt = priceOfDebt;
-      const scaledFlashloanPremium = flashloanPremium;
-      const scaledInitialCollateralAmount = initialCollateralAmount;
-      const scaledInitialDebtAmount = initialDebtAmount;
-      const scaledTargetDeLeverage = targetDeLeverageBigInt; // assuming this is a ratio, e.g., 0.5 for 50% reduction
 
-      // Calculate the target debt amount after deleverage
-      const targetDebtAmount =
-        (scaledInitialDebtAmount * scaledTargetDeLeverage) / EXP18;
+      let flashloanAmount =
+        ((EXP18 - targetDeLeverageBigInt) *
+          initialDebtAmount *
+          priceOfDebt *
+          collateralDecimalsBigInt) /
+        priceOfCollateral /
+        EXP18 /
+        debtDecimalsBigInt;
 
-      // Calculate the amount of debt to repay
-      const debtToRepay = scaledInitialDebtAmount - targetDebtAmount;
+      if (flashloanAmount < 0) {
+        flashloanAmount = 0n;
+      }
 
-      // Ensure debtToRepay is not negative
-      if (debtToRepay < 0) {
+      // Calculate final post-deleverage collateral and debt amounts (in native decimals)
+      const postDeleverageCollateralAmount =
+        initialCollateralAmount -
+        ((EXP18 + flashloanPremium) * flashloanAmount) / EXP18; // User's collateral decreases by the flashloaned amount + premium
+      const postDeleverageDebtAmount =
+        initialDebtAmount -
+        (priceOfCollateral * flashloanAmount * collateralDecimalsBigInt) /
+          (priceOfDebt * debtDecimalsBigInt); // User's debt decreases by the repaid amount
+
+      // Ensure amounts are not negative
+      if (postDeleverageCollateralAmount < 0 || postDeleverageDebtAmount < 0) {
         throw new Error(
-          "Debt to repay is negative. Adjust initial parameters or target deleverage."
+          "Deleverage results in negative collateral or debt. Adjust target deleverage."
         );
       }
 
-      // Flashloan amount is the collateral needed to repay `debtToRepay`
-      const flashloanAmount =
-        (debtToRepay * scaledPriceOfDebt) / scaledPriceOfCollateral; // This is the amount of collateral to flashloan
-
-      // Adjust flashloan amount for premium
-      const flashloanAmountWithPremium =
-        flashloanAmount + (debtToRepay * scaledFlashloanPremium) / EXP18; // Premium calculated on debtToRepay converted to collateral terms
-
-      // Calculate new LTV based on the new state
-      const newTotalCollateral =
-        scaledInitialCollateralAmount - flashloanAmountWithPremium; // Collateral after withdrawal
-      const newTotalDebt =
-        scaledInitialDebtAmount -
-        debtToRepay -
-        (debtToRepay * scaledFlashloanPremium) / EXP18; // Debt after repayment and premium
-
       const ltv =
-        (newTotalDebt * scaledPriceOfDebt * EXP18) /
-        (newTotalCollateral * scaledPriceOfCollateral); // LTV using full amounts
-
-      const postDeleverageCollateralAmount = newTotalCollateral;
-      const postDeleverageDebtAmount = newTotalDebt;
+        (priceOfDebt *
+          postDeleverageDebtAmount *
+          EXP18 *
+          collateralDecimalsBigInt) /
+        (priceOfCollateral * postDeleverageCollateralAmount) /
+        debtDecimalsBigInt; // LTV calculation using final values
 
       return {
-        flashloanAmount: flashloanAmountWithPremium,
+        flashloanAmount,
         ltv,
         collateralAmount: postDeleverageCollateralAmount,
         debtAmount: postDeleverageDebtAmount,
@@ -274,16 +263,25 @@ export class LeverageCalculator {
     priceOfDebt: bigint, // decimals 18
     collateralAmount: bigint,
     maxLTV: bigint,
-    flashloanPremium: bigint
+    flashloanPremium: bigint,
+    collateralDecimals: number,
+    debtDecimals: number
   ): number {
     const EXP18 = ethers.parseEther("1");
 
+    const collateralDecimalsBigInt = 10n ** BigInt(collateralDecimals);
+    const debtDecimalsBigInt = 10n ** BigInt(debtDecimals);
+
     const maxLeverage =
-      (priceOfCollateral * priceOfCollateral * (EXP18 + flashloanPremium) -
-        (priceOfDebt * priceOfDebt * initialDebtAmount * EXP18) /
-          (initialCollateralAmount + collateralAmount)) /
+      ((priceOfCollateral *
+        (EXP18 + flashloanPremium) *
+        (initialCollateralAmount + collateralAmount) *
+        debtDecimalsBigInt -
+        priceOfDebt * initialDebtAmount * EXP18 * collateralDecimalsBigInt) *
+        EXP18) /
       (priceOfCollateral *
-        priceOfCollateral *
+        (initialCollateralAmount + collateralAmount) *
+        debtDecimalsBigInt *
         (EXP18 + flashloanPremium - maxLTV));
 
     const maxLeverageNumber = Number(ethers.formatEther(maxLeverage));

@@ -4,6 +4,7 @@ pragma solidity ^0.8.13;
 import {IFlashLoanReceiver} from "../interfaces/IFlashLoanReceiver.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {MockAToken, MockVariableDebtToken} from "./MockAaveTokens.sol";
+import {MockERC20Mintable} from "./MockERC20Mintable.sol"; // Direct import
 
 /**
  * @title MockAaveV3Pool
@@ -67,7 +68,10 @@ contract MockAaveV3Pool {
         uint256[] memory premiums = new uint256[](assets.length);
         for (uint256 i = 0; i < assets.length; i++) {
             premiums[i] = (amounts[i] * premiumBps) / 10000;
-            // Remove actual transfer for mock: In a real Aave, pool transfers. Here, we just simulate the loan.
+            // Simulate the flashloaned tokens appearing in the receiver's balance
+            if (amounts[i] > 0) {
+                MockERC20Mintable(assets[i]).mint(receiverAddress, amounts[i]);
+            }
         }
 
         emit FlashLoanInvoked(receiverAddress, assets, amounts, premiums);

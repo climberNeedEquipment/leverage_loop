@@ -148,8 +148,8 @@ contract LeverageLoop is IFlashLoanReceiver {
             supplyAmount;
 
         borrowAmount =
-            SoladyERC20(params.variableDebtAsset).balanceOf(address(this)) -
-            borrowAmount;
+            borrowAmount -
+            SoladyERC20(params.variableDebtAsset).balanceOf(address(this));
 
         emit LeverageLoopExecuted(
             msg.sender,

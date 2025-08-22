@@ -581,12 +581,11 @@
           const pd = priceOfDebt;
           const fl = flashloanPremium;
           const totColl = initialCollateralAmount + collateralAmount;
-          // maxLeverage = (pc^2*(1+fl) - (pd^2*initialDebt*1e18)/(totColl)) / (pc^2*(1+fl - maxLTV))
-          const numerator =
-            pc * pc * (EXP18 + fl) -
-            (pd * pd * initialDebtAmount * EXP18) /
-              (totColl === 0n ? 1n : totColl);
-          const denominator = pc * pc * (EXP18 + fl - maxLTV);
+          const num1 = pc * (EXP18 + fl) * totColl * debtDecBI;
+          const num2 = pd * initialDebtAmount * EXP18 * collDecBI;
+          const numerator = num1 - num2;
+          const denominator = pc * totColl * (EXP18 + fl - maxLTV) * debtDecBI;
+
           if (denominator === 0n) return 1;
           const maxLevBI = (numerator * EXP18) / denominator; // scale to 1e18 for precision
           const maxLev = Number(maxLevBI) / 1e18;
@@ -627,54 +626,50 @@
             if (priceOfCollateral && priceOfDebt) {
               const pc = priceOfCollateral;
               const pd = priceOfDebt;
-              const nom1 =
-                (pc - (pd * tL) / EXP18) * initialDebtAmount * totColl;
-              const nom2 =
-                (((((pc * pc * totColl) / (pd === 0n ? 1n : pd)) *
-                  totColl *
-                  (tL - EXP18)) /
-                  EXP18) *
-                  (EXP18 + fl) *
+              const flashloanDebtValueNeeded =
+                ((tL - EXP18) *
+                  (collateralAmount + initialCollateralAmount) *
+                  pc *
                   debtDecBI) /
+                pd /
                 EXP18 /
-                (collDecBI === 0n ? 1n : collDecBI);
-              const denom =
-                pc * ((totColl * (EXP18 + fl)) / EXP18) * debtDecBI -
-                pd * initialDebtAmount * (collDecBI === 0n ? 1n : collDecBI);
-              if (denom === 0n)
-                return {
-                  flashloanAmount: 0n,
-                  ltv: 0n,
-                  collateralAmount: totColl,
-                  debtAmount: initialDebtAmount,
-                };
-              const flashloanAmount = (nom1 + nom2) / denom;
-              const ltvNumerator =
-                pd * initialDebtAmount * (collDecBI === 0n ? 1n : collDecBI) +
-                (pc * totColl * (tL - EXP18) * (EXP18 + fl)) / EXP18;
-              const ltvDenominator = pc * totColl * tL * debtDecBI;
-              const ltv = (ltvNumerator * EXP18) / ltvDenominator;
+                collDecBI;
+
+              if (flashloanDebtValueNeeded < 0n) {
+                throw new Error(
+                  "Calculated flashloan debt value is negative. Target leverage is too low or initial debt too high for a leverage operation."
+                );
+              }
+              // Convert flashloan debt value to actual borrow asset amount (native decimals)
+              const calculatedFlashloanCollateralAmount =
+                (flashloanDebtValueNeeded * pd * collDecBI) / (pc * debtDecBI);
+
+              // Adjust flashloan amount for premium (premium is on the borrowed amount)
+              const flashloanAmountWithPremium =
+                (flashloanDebtValueNeeded * (EXP18 + fl)) / EXP18;
+
+              // Calculate new total collateral and debt for post-leverage display (in native decimals)
+              const newCollateralFromSwapAmount =
+                calculatedFlashloanCollateralAmount;
+
               const postColl =
                 initialCollateralAmount +
                 collateralAmount +
-                (pd * flashloanAmount * (debtDecBI === 0n ? 1n : debtDecBI)) /
-                  (pc === 0n ? 1n : pc) /
-                  (collDecBI === 0n ? 1n : collDecBI);
-              const postDebt =
-                initialDebtAmount + ((EXP18 + fl) * flashloanAmount) / EXP18;
+                newCollateralFromSwapAmount;
+              const postDebt = initialDebtAmount + flashloanDebtValueNeeded;
+
+              // Recalculate LTV for display after all operations
+              const finalTotalCollateralValue = (postColl * pc) / collDecBI;
+              const finalTotalDebtValue = (postDebt * pd) / debtDecBI;
+              const ltv =
+                (finalTotalDebtValue * EXP18) / finalTotalCollateralValue; // LTV calculation using final values
               return {
-                flashloanAmount,
+                flashloanAmount: flashloanDebtValueNeeded, // Return the flashloan amount including premium
                 ltv,
                 collateralAmount: postColl,
                 debtAmount: postDebt,
               };
             }
-            return {
-              flashloanAmount: 0n,
-              ltv: 0n,
-              collateralAmount: totColl,
-              debtAmount: initialDebtAmount,
-            };
           }
           // Mirrors convert-amounts branch from LeverageCalculator.calculateLeverageParams
           const cca = convertCollateralAmount;
@@ -697,43 +692,46 @@
           // Price branch
           const pc = priceOfCollateral;
           const pd = priceOfDebt;
-          const nom1 = (pc - (pd * tL) / EXP18) * initialDebtAmount * totColl;
-          const nom2 =
-            (((((pc * pc * totColl) / (pd === 0n ? 1n : pd)) *
-              totColl *
-              (tL - EXP18)) /
-              EXP18) *
-              (EXP18 + fl) *
+
+          const flashloanDebtValueNeeded =
+            ((tL - EXP18) *
+              (collateralAmount + initialCollateralAmount) *
+              pc *
               debtDecBI) /
+            pd /
             EXP18 /
-            (collDecBI === 0n ? 1n : collDecBI);
-          const denom =
-            pc * ((totColl * (EXP18 + fl)) / EXP18) * debtDecBI -
-            pd * initialDebtAmount * (collDecBI === 0n ? 1n : collDecBI);
-          if (denom === 0n)
-            return {
-              flashloanAmount: 0n,
-              ltv: 0n,
-              collateralAmount: totColl,
-              debtAmount: initialDebtAmount,
-            };
-          const flashloanAmount = (nom1 + nom2) / denom;
-          const ltvNumerator =
-            pd * initialDebtAmount * (collDecBI === 0n ? 1n : collDecBI) +
-            pc * totColl * (tL - EXP18) * (EXP18 + fl) * debtDecBI;
-          const ltvDenominator = pc * totColl * tL * debtDecBI;
-          const ltv = ltvNumerator / ltvDenominator;
+            collDecBI;
+
+          if (flashloanDebtValueNeeded < 0n) {
+            throw new Error(
+              "Calculated flashloan debt value is negative. Target leverage is too low or initial debt too high for a leverage operation."
+            );
+          }
+          // Convert flashloan debt value to actual borrow asset amount (native decimals)
+          const calculatedFlashloanCollateralAmount =
+            (flashloanDebtValueNeeded * pd * collDecBI) / (pc * debtDecBI);
+
+          // Adjust flashloan amount for premium (premium is on the borrowed amount)
+          const flashloanAmountWithPremium =
+            (flashloanDebtValueNeeded * (EXP18 + fl)) / EXP18;
+
+          // Calculate new total collateral and debt for post-leverage display (in native decimals)
+          const newCollateralFromSwapAmount =
+            calculatedFlashloanCollateralAmount;
 
           const postColl =
             initialCollateralAmount +
             collateralAmount +
-            (pd * flashloanAmount * (debtDecBI === 0n ? 1n : debtDecBI)) /
-              (pc === 0n ? 1n : pc) /
-              (collDecBI === 0n ? 1n : collDecBI);
-          const postDebt =
-            initialDebtAmount + ((EXP18 + fl) * flashloanAmount) / EXP18;
+            newCollateralFromSwapAmount;
+          const postDebt = initialDebtAmount + flashloanDebtValueNeeded;
+
+          // Recalculate LTV for display after all operations
+          const finalTotalCollateralValue = (postColl * pc) / collDecBI;
+          const finalTotalDebtValue = (postDebt * pd) / debtDecBI;
+          const ltv = (finalTotalDebtValue * EXP18) / finalTotalCollateralValue; // LTV calculation using final values
+
           return {
-            flashloanAmount,
+            flashloanAmount: flashloanDebtValueNeeded, // Return the flashloan amount including premium
             ltv,
             collateralAmount: postColl,
             debtAmount: postDebt,
@@ -778,10 +776,11 @@
                   debtAmount: initialDebtAmount,
                 };
               let flashloanAmount =
-                ((EXP18 - td) * initialDebtAmount * pd) /
-                pc /
-                EXP18 /
-                (debtDecBI === 0n ? 1n : debtDecBI);
+                (td *
+                  initialDebtAmount *
+                  pd *
+                  (collDecBI === 0n ? 1n : collDecBI)) /
+                (pc * EXP18 * (debtDecBI === 0n ? 1n : debtDecBI));
               if (flashloanAmount < 0n) flashloanAmount = 0n;
               const denom =
                 pc *
@@ -814,9 +813,9 @@
                 ((EXP18 + fl) * flashloanAmount) / EXP18;
               const postDebt =
                 initialDebtAmount -
-                (pc * flashloanAmount * (debtDecBI === 0n ? 1n : debtDecBI)) /
+                (pc * flashloanAmount * (collDecBI === 0n ? 1n : collDecBI)) /
                   (pd === 0n ? 1n : pd) /
-                  (collDecBI === 0n ? 1n : collDecBI);
+                  (debtDecBI === 0n ? 1n : debtDecBI);
               return {
                 flashloanAmount,
                 ltv,
@@ -852,34 +851,18 @@
               debtAmount: initialDebtAmount,
             };
           let flashloanAmount =
-            ((EXP18 - td) * initialDebtAmount * pd) /
+            ((EXP18 - td) * initialDebtAmount * pd * collDecBI) /
             pc /
-            EXP18 /
-            (debtDecBI === 0n ? 1n : debtDecBI);
+            debtDecBI /
+            EXP18;
           if (flashloanAmount < 0n) flashloanAmount = 0n;
-          const denom =
-            pc * initialCollateralAmount * (debtDecBI === 0n ? 1n : debtDecBI) -
-            ((collDecBI === 0n ? 1n : collDecBI) *
-              initialDebtAmount *
-              pd *
-              (EXP18 - td) *
-              (EXP18 + fl)) /
-              EXP18 /
-              EXP18;
 
-          if (denom <= 0n)
-            return {
-              flashloanAmount,
-              ltv: 0n,
-              collateralAmount: initialCollateralAmount,
-              debtAmount: initialDebtAmount,
-            };
           const ltv =
-            (pd *
-              td *
-              initialDebtAmount *
-              (collDecBI === 0n ? 1n : collDecBI)) /
-            denom;
+            (pd * td * initialDebtAmount * EXP18 * collDecBI) /
+            (pc *
+              (initialCollateralAmount * EXP18 -
+                (EXP18 + fl) * flashloanAmount)) /
+            debtDecBI;
           const postColl =
             initialCollateralAmount - ((EXP18 + fl) * flashloanAmount) / EXP18;
           const postDebt =
@@ -938,26 +921,11 @@
         return {
           collateralDecimals: Number(els.collateralDecimals.value),
           debtDecimals: Number(els.debtDecimals.value),
-          initialCollateralAmount: parseFixedDecimalToBigInt(
-            els.initialCollateralAmount.value,
-            els.collateralDecimals.value
-          ),
-          initialDebtAmount: parseFixedDecimalToBigInt(
-            els.initialDebtAmount.value,
-            els.debtDecimals.value
-          ),
-          collateralAmount: parseFixedDecimalToBigInt(
-            els.collateralAmount.value,
-            els.collateralDecimals.value
-          ),
-          convertCollateralAmount: parseFixedDecimalToBigInt(
-            els.convertCollateralAmount?.value || "0",
-            els.collateralDecimals.value
-          ),
-          convertDebtAmount: parseFixedDecimalToBigInt(
-            els.convertDebtAmount?.value || "0",
-            els.debtDecimals.value
-          ),
+          initialCollateralAmount: BigInt(els.initialCollateralAmount.value),
+          initialDebtAmount: BigInt(els.initialDebtAmount.value),
+          collateralAmount: BigInt(els.collateralAmount.value),
+          convertCollateralAmount: BigInt(els.convertCollateralAmount.value),
+          convertDebtAmount: BigInt(els.convertDebtAmount.value),
           priceOfCollateral: parseFixedDecimalToBigInt(
             els.priceOfCollateral.value
           ),
@@ -1012,191 +980,201 @@
       }
 
       function onInputsChanged() {
-        const i = readInputs();
-        updateModeUI();
-        const isConvert = usingConvertMode();
-        if (!isConvert) {
-          const maxLev = calcMaxLeverage({
-            initialCollateralAmount: i.initialCollateralAmount,
-            initialDebtAmount: i.initialDebtAmount,
-            priceOfCollateral: i.priceOfCollateral,
-            priceOfDebt: i.priceOfDebt,
-            collateralAmount: i.collateralAmount,
-            maxLTV: i.maxLTV,
-            flashloanPremium: i.flashloanPremium,
-            collateralDecimals: i.collateralDecimals,
-            debtDecimals: i.debtDecimals,
-            useConvert: false,
-          });
-          setSliderMax(maxLev);
-        } else {
-          // In convert mode we don't have explicit prices; allow a generous default max
-          const maxLev = calcMaxLeverage({
-            initialCollateralAmount: i.initialCollateralAmount,
-            initialDebtAmount: i.initialDebtAmount,
-            convertCollateralAmount: i.convertCollateralAmount,
-            convertDebtAmount: i.convertDebtAmount,
-            collateralAmount: i.collateralAmount,
-            maxLTV: i.maxLTV,
-            flashloanPremium: i.flashloanPremium,
-            collateralDecimals: i.collateralDecimals,
-            debtDecimals: i.debtDecimals,
-            useConvert: true, // Added this line
-          });
-          setSliderMax(maxLev);
-        }
-
-        const tLevNumber = clamp(
-          Number(els.targetLeverage.value),
-          1,
-          Number(els.targetLeverage.max || 1)
-        );
-        els.targetLeverage.value = String(tLevNumber);
-        els.targetLeverageVal.textContent = tLevNumber.toFixed(2);
-
-        const tLevBI = parseFixedDecimalToBigInt(String(tLevNumber));
-
-        const { flashloanAmount, ltv } = calcLeverageParams({
-          initialCollateralAmount: i.initialCollateralAmount,
-          initialDebtAmount: i.initialDebtAmount,
-          convertCollateralAmount: i.convertCollateralAmount,
-          convertDebtAmount: i.convertDebtAmount,
-          priceOfCollateral: i.priceOfCollateral,
-          priceOfDebt: i.priceOfDebt,
-          collateralAmount: i.collateralAmount,
-          targetLeverage: tLevBI,
-          flashloanPremium: i.flashloanPremium,
-          collateralDecimals: i.collateralDecimals,
-          debtDecimals: i.debtDecimals,
-          useConvert: isConvert,
-        });
-
-        // In convert mode, flashloan amount for leverage equals convertDebtAmount
-        const leverageFL =
-          isConvert && i.convertDebtAmount > 0n
-            ? i.convertDebtAmount
-            : flashloanAmount;
-        const fla = addThousandsSeparators(
-          formatBigIntToFixedDecimal(leverageFL, i.debtDecimals, 6)
-        );
-        const ltvRatioNum = toNormalizedNumber(ltv, 6);
-        const ltvRatio = ltvRatioNum.toFixed(4);
-        const ltvPct = (ltvRatioNum * 100).toFixed(2);
-        els.flashloanAmountOut.textContent = `${fla}`;
-        // Pad to fixed width to avoid layout shifts
-        const paddedRatio = ltvRatio.padStart(8, " ");
-        const paddedPct = ltvPct.padStart(6, " ");
-        els.ltvOut.textContent = `${paddedRatio} (${paddedPct}%)`;
-        // In convert mode, redefine leverage as post-collateral / initial-collateral and set the bar
-        if (isConvert && i.initialCollateralAmount > 0n) {
-          const { collateralAmount: postLevColl } = calcLeverageParams({
-            initialCollateralAmount: i.initialCollateralAmount,
-            initialDebtAmount: i.initialDebtAmount,
-            convertCollateralAmount: i.convertCollateralAmount,
-            convertDebtAmount: i.convertDebtAmount,
-            priceOfCollateral: i.priceOfCollateral,
-            priceOfDebt: i.priceOfDebt,
-            collateralAmount: i.collateralAmount,
-            targetLeverage: tLevBI,
-            flashloanPremium: i.flashloanPremium,
-            collateralDecimals: i.collateralDecimals,
-            debtDecimals: i.debtDecimals,
-            useConvert: isConvert,
-          });
-          const newLevBI = (postLevColl * EXP18) / i.initialCollateralAmount;
-          const newLevNum = Math.max(1, toNormalizedNumber(newLevBI, 6));
-          const clamped = clamp(
-            newLevNum,
-            1,
-            Number(els.targetLeverage.max || 3)
-          );
-          els.targetLeverage.value = String(clamped);
-          els.targetLeverageVal.textContent = clamped.toFixed(2);
-        }
-
-        const { collateralAmount: postLevColl, debtAmount: postLevDebt } =
-          calcLeverageParams({
-            initialCollateralAmount: i.initialCollateralAmount,
-            initialDebtAmount: i.initialDebtAmount,
-            convertCollateralAmount: i.convertCollateralAmount,
-            convertDebtAmount: i.convertDebtAmount,
-            priceOfCollateral: i.priceOfCollateral,
-            priceOfDebt: i.priceOfDebt,
-            collateralAmount: i.collateralAmount,
-            targetLeverage: tLevBI,
-            flashloanPremium: i.flashloanPremium,
-            collateralDecimals: i.collateralDecimals,
-            debtDecimals: i.debtDecimals,
-            useConvert: isConvert,
-          });
-        const postLevCollText = addThousandsSeparators(
-          formatBigIntToFixedDecimal(postLevColl, i.collateralDecimals, 6)
-        );
-        const postLevDebtText = addThousandsSeparators(
-          formatBigIntToFixedDecimal(postLevDebt, i.debtDecimals, 6)
-        );
-        els.postLevCollOut.textContent = `${postLevCollText}`;
-        els.postLevDebtOut.textContent = `${postLevDebtText}`;
-
-        let warn = Number(ltv) > Number(i.maxLTV) ? "LTV exceeds Max LTV!" : "";
-        if (
-          isConvert &&
-          (i.convertCollateralAmount === 0n || i.convertDebtAmount === 0n)
-        ) {
-          warn =
-            "Enter non-zero conversion amounts for both collateral and debt.";
-        }
-        els.notes.textContent = `All inputs parsed as 18-decimal BigInt internally. Max LTV and Premium should be decimals (e.g., 0.80 and 0.0009). ${warn}`;
-
-        // Deleverage compute
-        const tDelevNum = clamp(Number(els.targetDeleverage?.value || 0), 0, 1);
-        if (els.targetDeleverage) {
-          els.targetDeleverage.value = String(tDelevNum);
-          els.targetDeleverageVal.textContent = tDelevNum.toFixed(2);
-          const tDelevBI = parseFixedDecimalToBigInt(String(tDelevNum));
-          const { flashloanAmount: deFla, ltv: deLtv } = calcDeleverageParams({
-            initialCollateralAmount: i.initialCollateralAmount,
-            initialDebtAmount: i.initialDebtAmount,
-            convertCollateralAmount: i.convertCollateralAmount,
-            convertDebtAmount: i.convertDebtAmount,
-            priceOfCollateral: i.priceOfCollateral,
-            priceOfDebt: i.priceOfDebt,
-            targetDeleverage: tDelevBI,
-            flashloanPremium: i.flashloanPremium,
-            collateralDecimals: i.collateralDecimals,
-            debtDecimals: i.debtDecimals,
-            useConvert: isConvert,
-          });
-          // In convert mode, deleverage flashloan equals convertCollateralAmount
-          const deleverageFL =
-            isConvert && i.convertCollateralAmount > 0n
-              ? i.convertCollateralAmount
-              : deFla;
-          const deFlaText = addThousandsSeparators(
-            formatBigIntToFixedDecimal(deleverageFL, i.collateralDecimals, 6)
-          );
-          const deLtvRatioNum = toNormalizedNumber(deLtv, 6);
-          const deLtvRatio = deLtvRatioNum.toFixed(4);
-          const deLtvPct = (deLtvRatioNum * 100).toFixed(2);
-          els.flashloanAmountDelevOut.textContent = `${deFlaText}`;
-          els.ltvDelevOut.textContent = `${deLtvRatio} (${deLtvPct}%)`;
-          // In convert mode, adjust the deleverage bar to reflect conversion amounts
-          if (isConvert && i.initialDebtAmount > 0n) {
-            // EXP18 - td = reducedDebt / initialDebt => td = 1 - reduced/initial
-            const reducedDebtBI =
-              (i.convertDebtAmount * EXP18) / i.initialDebtAmount;
-            let tdBI = EXP18 - reducedDebtBI;
-            if (tdBI < 0n) tdBI = 0n;
-            if (tdBI > EXP18) tdBI = EXP18;
-            const tdNum = clamp(toNormalizedNumber(tdBI, 6), 0, 1);
-            if (els.targetDeleverage) {
-              els.targetDeleverage.value = tdNum.toFixed(2);
-              els.targetDeleverageVal.textContent = tdNum.toFixed(2);
-            }
+        try {
+          const i = readInputs();
+          updateModeUI();
+          const isConvert = usingConvertMode();
+          if (!isConvert) {
+            const maxLev = calcMaxLeverage({
+              initialCollateralAmount: i.initialCollateralAmount,
+              initialDebtAmount: i.initialDebtAmount,
+              priceOfCollateral: i.priceOfCollateral,
+              priceOfDebt: i.priceOfDebt,
+              collateralAmount: i.collateralAmount,
+              maxLTV: i.maxLTV,
+              flashloanPremium: i.flashloanPremium,
+              collateralDecimals: i.collateralDecimals,
+              debtDecimals: i.debtDecimals,
+              useConvert: false,
+            });
+            setSliderMax(maxLev);
+          } else {
+            // In convert mode we don't have explicit prices; allow a generous default max
+            const maxLev = calcMaxLeverage({
+              initialCollateralAmount: i.initialCollateralAmount,
+              initialDebtAmount: i.initialDebtAmount,
+              convertCollateralAmount: i.convertCollateralAmount,
+              convertDebtAmount: i.convertDebtAmount,
+              collateralAmount: i.collateralAmount,
+              maxLTV: i.maxLTV,
+              flashloanPremium: i.flashloanPremium,
+              collateralDecimals: i.collateralDecimals,
+              debtDecimals: i.debtDecimals,
+              useConvert: true, // Added this line
+            });
+            setSliderMax(maxLev);
           }
-          // Show post-deleverage amounts
-          const { collateralAmount: postDelevColl, debtAmount: postDelevDebt } =
-            calcDeleverageParams({
+
+          const tLevNumber = clamp(
+            Number(els.targetLeverage.value),
+            1,
+            Number(els.targetLeverage.max || 1)
+          );
+          els.targetLeverage.value = String(tLevNumber);
+          els.targetLeverageVal.textContent = tLevNumber.toFixed(2);
+
+          const tLevBI = parseFixedDecimalToBigInt(String(tLevNumber));
+
+          const { flashloanAmount, ltv } = calcLeverageParams({
+            initialCollateralAmount: i.initialCollateralAmount,
+            initialDebtAmount: i.initialDebtAmount,
+            convertCollateralAmount: i.convertCollateralAmount,
+            convertDebtAmount: i.convertDebtAmount,
+            priceOfCollateral: i.priceOfCollateral,
+            priceOfDebt: i.priceOfDebt,
+            collateralAmount: i.collateralAmount,
+            targetLeverage: tLevBI,
+            flashloanPremium: i.flashloanPremium,
+            collateralDecimals: i.collateralDecimals,
+            debtDecimals: i.debtDecimals,
+            useConvert: isConvert,
+          });
+
+          // In convert mode, flashloan amount for leverage equals convertDebtAmount
+          const leverageFL =
+            isConvert && i.convertDebtAmount > 0n
+              ? i.convertDebtAmount
+              : flashloanAmount;
+          const fla = addThousandsSeparators(
+            formatBigIntToFixedDecimal(leverageFL, i.debtDecimals, 6)
+          );
+          const ltvRatioNum = toNormalizedNumber(ltv, 6);
+          const ltvRatio = ltvRatioNum.toFixed(4);
+          const ltvPct = (ltvRatioNum * 100).toFixed(2);
+          els.flashloanAmountOut.textContent = `${fla}`;
+          // Pad to fixed width to avoid layout shifts
+          const paddedRatio = ltvRatio.padStart(8, " ");
+          const paddedPct = ltvPct.padStart(6, " ");
+          els.ltvOut.textContent = `${paddedRatio} (${paddedPct}%)`;
+          // In convert mode, redefine leverage as post-collateral / initial-collateral and set the bar
+          if (isConvert && i.initialCollateralAmount > 0n) {
+            const { collateralAmount: postLevColl } = calcLeverageParams({
+              initialCollateralAmount: i.initialCollateralAmount,
+              initialDebtAmount: i.initialDebtAmount,
+              convertCollateralAmount: i.convertCollateralAmount,
+              convertDebtAmount: i.convertDebtAmount,
+              priceOfCollateral: i.priceOfCollateral,
+              priceOfDebt: i.priceOfDebt,
+              collateralAmount: i.collateralAmount,
+              targetLeverage: tLevBI,
+              flashloanPremium: i.flashloanPremium,
+              collateralDecimals: i.collateralDecimals,
+              debtDecimals: i.debtDecimals,
+              useConvert: isConvert,
+            });
+            const newLevBI = (postLevColl * EXP18) / i.initialCollateralAmount;
+            const newLevNum = Math.max(1, toNormalizedNumber(newLevBI, 6));
+            const clamped = clamp(
+              newLevNum,
+              1,
+              Number(els.targetLeverage.max || 3)
+            );
+            els.targetLeverage.value = String(clamped);
+            els.targetLeverageVal.textContent = clamped.toFixed(2);
+          }
+
+          const { collateralAmount: postLevColl, debtAmount: postLevDebt } =
+            calcLeverageParams({
+              initialCollateralAmount: i.initialCollateralAmount,
+              initialDebtAmount: i.initialDebtAmount,
+              convertCollateralAmount: i.convertCollateralAmount,
+              convertDebtAmount: i.convertDebtAmount,
+              priceOfCollateral: i.priceOfCollateral,
+              priceOfDebt: i.priceOfDebt,
+              collateralAmount: i.collateralAmount,
+              targetLeverage: tLevBI,
+              flashloanPremium: i.flashloanPremium,
+              collateralDecimals: i.collateralDecimals,
+              debtDecimals: i.debtDecimals,
+              useConvert: isConvert,
+            });
+          const postLevCollText = addThousandsSeparators(
+            formatBigIntToFixedDecimal(postLevColl, i.collateralDecimals, 6)
+          );
+          const postLevDebtText = addThousandsSeparators(
+            formatBigIntToFixedDecimal(postLevDebt, i.debtDecimals, 6)
+          );
+          els.postLevCollOut.textContent = `${postLevCollText}`;
+          els.postLevDebtOut.textContent = `${postLevDebtText}`;
+
+          let warn =
+            Number(ltv) > Number(i.maxLTV) ? "LTV exceeds Max LTV!" : "";
+          if (
+            isConvert &&
+            (i.convertCollateralAmount === 0n || i.convertDebtAmount === 0n)
+          ) {
+            warn =
+              "Enter non-zero conversion amounts for both collateral and debt.";
+          }
+          els.notes.textContent = `All inputs parsed as 18-decimal BigInt internally. Max LTV and Premium should be decimals (e.g., 0.80 and 0.0009). ${warn}`;
+
+          // Deleverage compute
+          const tDelevNum = clamp(
+            Number(els.targetDeleverage?.value || 0),
+            0,
+            1
+          );
+          if (els.targetDeleverage) {
+            els.targetDeleverage.value = String(tDelevNum);
+            els.targetDeleverageVal.textContent = tDelevNum.toFixed(2);
+            const tDelevBI = parseFixedDecimalToBigInt(String(tDelevNum));
+            const { flashloanAmount: deFla, ltv: deLtv } = calcDeleverageParams(
+              {
+                initialCollateralAmount: i.initialCollateralAmount,
+                initialDebtAmount: i.initialDebtAmount,
+                convertCollateralAmount: i.convertCollateralAmount,
+                convertDebtAmount: i.convertDebtAmount,
+                priceOfCollateral: i.priceOfCollateral,
+                priceOfDebt: i.priceOfDebt,
+                targetDeleverage: tDelevBI,
+                flashloanPremium: i.flashloanPremium,
+                collateralDecimals: i.collateralDecimals,
+                debtDecimals: i.debtDecimals,
+                useConvert: isConvert,
+              }
+            );
+            // In convert mode, deleverage flashloan equals convertCollateralAmount
+            const deleverageFL =
+              isConvert && i.convertCollateralAmount > 0n
+                ? i.convertCollateralAmount
+                : deFla;
+            const deFlaText = addThousandsSeparators(
+              formatBigIntToFixedDecimal(deleverageFL, i.collateralDecimals, 6)
+            );
+            const deLtvRatioNum = toNormalizedNumber(deLtv, 6);
+            const deLtvRatio = deLtvRatioNum.toFixed(4);
+            const deLtvPct = (deLtvRatioNum * 100).toFixed(2);
+            els.flashloanAmountDelevOut.textContent = `${deFlaText}`;
+            els.ltvDelevOut.textContent = `${deLtvRatio} (${deLtvPct}%)`;
+            // In convert mode, adjust the deleverage bar to reflect conversion amounts
+            if (isConvert && i.initialDebtAmount > 0n) {
+              // EXP18 - td = reducedDebt / initialDebt => td = 1 - reduced/initial
+              const reducedDebtBI =
+                (i.convertDebtAmount * EXP18) / i.initialDebtAmount;
+              let tdBI = EXP18 - reducedDebtBI;
+              if (tdBI < 0n) tdBI = 0n;
+              if (tdBI > EXP18) tdBI = EXP18;
+              const tdNum = clamp(toNormalizedNumber(tdBI, 6), 0, 1);
+              if (els.targetDeleverage) {
+                els.targetDeleverage.value = tdNum.toFixed(2);
+                els.targetDeleverageVal.textContent = tdNum.toFixed(2);
+              }
+            }
+            // Show post-deleverage amounts
+            const {
+              collateralAmount: postDelevColl,
+              debtAmount: postDelevDebt,
+            } = calcDeleverageParams({
               initialCollateralAmount: i.initialCollateralAmount,
               initialDebtAmount: i.initialDebtAmount,
               convertCollateralAmount: i.convertCollateralAmount,
@@ -1209,14 +1187,25 @@
               debtDecimals: i.debtDecimals,
               useConvert: isConvert,
             });
-          const postDelevCollText = addThousandsSeparators(
-            formatBigIntToFixedDecimal(postDelevColl, i.collateralDecimals, 6)
-          );
-          const postDelevDebtText = addThousandsSeparators(
-            formatBigIntToFixedDecimal(postDelevDebt, i.debtDecimals, 6)
-          );
-          els.postDelevCollOut.textContent = `${postDelevCollText}`;
-          els.postDelevDebtOut.textContent = `${postDelevDebtText}`;
+            const postDelevCollText = addThousandsSeparators(
+              formatBigIntToFixedDecimal(postDelevColl, i.collateralDecimals, 6)
+            );
+            const postDelevDebtText = addThousandsSeparators(
+              formatBigIntToFixedDecimal(postDelevDebt, i.debtDecimals, 6)
+            );
+            els.postDelevCollOut.textContent = `${postDelevCollText}`;
+            els.postDelevDebtOut.textContent = `${postDelevDebtText}`;
+          }
+        } catch (e) {
+          els.notes.textContent = `Error: ${e.message}`;
+          els.flashloanAmountOut.textContent = "-";
+          els.ltvOut.textContent = "-";
+          els.postLevCollOut.textContent = "-";
+          els.postLevDebtOut.textContent = "-";
+          els.flashloanAmountDelevOut.textContent = "-";
+          els.ltvDelevOut.textContent = "-";
+          els.postDelevCollOut.textContent = "-";
+          els.postDelevDebtOut.textContent = "-";
         }
       }
 
