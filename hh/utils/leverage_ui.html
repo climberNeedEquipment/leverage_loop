@@ -762,6 +762,15 @@
         const collDecBI = makeDecimalsBI(collateralDecimals);
         const debtDecBI = makeDecimalsBI(debtDecimals);
 
+        if (initialCollateralAmount === 0n) {
+          return {
+            flashloanAmount: 0n,
+            ltv: 0n,
+            collateralAmount: initialCollateralAmount,
+            debtAmount: initialDebtAmount,
+          };
+        }
+
         if (useConvert) {
           if (!convertCollateralAmount || !convertDebtAmount) {
             // Fallback to price branch if available (with decimals adaptation)
@@ -1098,6 +1107,7 @@
               debtDecimals: i.debtDecimals,
               useConvert: isConvert,
             });
+
           const postLevCollText = addThousandsSeparators(
             formatBigIntToFixedDecimal(postLevColl, i.collateralDecimals, 6)
           );
@@ -1187,6 +1197,7 @@
               debtDecimals: i.debtDecimals,
               useConvert: isConvert,
             });
+
             const postDelevCollText = addThousandsSeparators(
               formatBigIntToFixedDecimal(postDelevColl, i.collateralDecimals, 6)
             );
