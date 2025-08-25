@@ -1,8 +1,17 @@
+[rpc_endpoints]
+kaia = "${KAIA_RPC_URL}"
+
 [profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
+remappings = [
+    "solady/=lib/solady/",
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+]
 optimizer = true
-via_ir = true
+vi-ir = true
+auto_detect_solc = false
+solc = "0.8.20"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -15,6 +15,7 @@ export interface ForkTestContext {
   variableDebtToken: Contract;
   eisenRouter: Contract;
   user: string;
+  aaveAvailable: boolean;
 }
 
 export interface TestScenario {
@@ -65,25 +66,44 @@ export class ForkTestUtils {
       signer
     );
 
-    // Get token addresses from Aave
-    const [aTokenAddress, , variableDebtTokenAddress] =
-      await dataProvider.getReserveTokensAddresses(networkConfig.weth);
+    // Get token addresses from ProtocolDataProvider if available; otherwise, fall back to placeholders
+    let aTokenCollateral: Contract;
+    let variableDebtToken: Contract;
+    try {
+      const [aTokenAddress, , variableDebtTokenAddress] =
+        await dataProvider.getReserveTokensAddresses(networkConfig.weth);
+      aTokenCollateral = new ethers.Contract(
+        aTokenAddress,
+        this.getERC20ABI(),
+        signer
+      );
+      variableDebtToken = new ethers.Contract(
+        variableDebtTokenAddress,
+        this.getVariableDebtTokenABI(),
+        signer
+      );
+    } catch {
+      // Not an Aave-like deployment; use underlying tokens as placeholders to keep context usable for non-Aave tests
+      aTokenCollateral = new ethers.Contract(
+        networkConfig.weth,
+        this.getERC20ABI(),
+        signer
+      );
+      variableDebtToken = new ethers.Contract(
+        networkConfig.usdc,
+        this.getVariableDebtTokenABI(),
+        signer
+      );
+    }
 
-    const aTokenCollateral = new ethers.Contract(
-      aTokenAddress,
-      this.getERC20ABI(),
-      signer
-    );
-    const variableDebtToken = new ethers.Contract(
-      variableDebtTokenAddress,
-      this.getVariableDebtTokenABI(),
-      signer
-    );
-
-    // Deploy mock Eisen router
-    const MockEisenRouter = await ethers.getContractFactory("MockEisenRouter");
-    const eisenRouter = await MockEisenRouter.deploy();
-    await eisenRouter.waitForDeployment();
+    // Use real Eisen router from network config (no deployment)
+    const eisenRouterAddress = networkConfig.eisenRouter;
+    if (!eisenRouterAddress) {
+      throw new Error(
+        `eisenRouter address missing for network ${networkConfig.name}`
+      );
+    }
+    const eisenRouter = new ethers.Contract(eisenRouterAddress, [], signer);
 
     // Deploy LeverageLoop
     const LeverageLoop = await ethers.getContractFactory("LeverageLoop");
@@ -99,6 +119,25 @@ export class ForkTestUtils {
       signer
     );
 
+    // Probe for Aave-like availability using a harmless staticcall to flashLoan
+    let aaveAvailable = true;
+    try {
+      const assetsProbe = [networkConfig.usdc];
+      const amountsProbe = [1n];
+      const modesProbe = [0];
+      await (pool as unknown as any).callStatic.flashLoan(
+        await leverageLoop.getAddress(),
+        assetsProbe,
+        amountsProbe,
+        modesProbe,
+        userAddr,
+        "0x",
+        0
+      );
+    } catch {
+      aaveAvailable = false;
+    }
+
     return {
       network: networkConfig,
       leverageLoop,
@@ -110,6 +149,7 @@ export class ForkTestUtils {
       variableDebtToken,
       eisenRouter,
       user: userAddr,
+      aaveAvailable,
     };
   }
 
@@ -131,9 +171,15 @@ export class ForkTestUtils {
     }
 
     // Enable collateral
-    await (
-      await pool.setUserUseReserveAsCollateral(context.network.weth, true)
-    ).wait();
+    try {
+      await (
+        await pool.setUserUseReserveAsCollateral(context.network.weth, true)
+      ).wait();
+    } catch (e) {
+      console.log(
+        "Note: Pool does not support collateral configuration on this network"
+      );
+    }
 
     // Approve LeverageLoop to spend user's tokens
     await (
@@ -194,13 +240,13 @@ export class ForkTestUtils {
         initialDebtAmount,
         undefined, // convertCollateralAmount
         undefined, // convertDebtAmount
-        BigInt(Math.floor(collateralPrice * 1e18)), // priceOfCollateral (1e18)
-        BigInt(Math.floor(borrowPrice * 1e18)), // priceOfDebt (1e18)
+        collateralPrice, // priceOfCollateral (1e18)
+        borrowPrice, // priceOfDebt (1e18)
         collateralDecimals,
         debtDecimals,
         scenario.collateralAmount, // collateralAmount to add
         scenario.targetLeverage,
-        network.flashloanPremium // Use premium from network config
+        network.flashloanPremium ?? ethers.parseEther("0.0009") // default 9 bps
       );
 
       // Validate parameters
@@ -222,7 +268,7 @@ export class ForkTestUtils {
         leverageData.flashloanAmount.toString(), // fromAmount
         scenario.slippageTolerance, // slippage
         leverageLoopAddress, // recipient
-        false, // useMock: false for fork tests
+        false, // use real API for fork tests
         network.chainId // chainId
       );
 
@@ -230,18 +276,18 @@ export class ForkTestUtils {
       const [aTokenAddress, , variableDebtTokenAddress] =
         await context.dataProvider.getReserveTokensAddresses(network.weth);
 
-      // Execute leverage
-      const leverageParams = {
-        aToken: aTokenAddress,
-        variableDebtAsset: variableDebtTokenAddress,
-        collateralAsset: network.weth,
-        borrowAsset: network.usdc,
-        collateralAmount: scenario.collateralAmount,
-        flashloanAmount: leverageData.flashloanAmount,
-        swapPathData: swapData,
-      };
+      // Execute leverage (pass tuple as array due to unnamed components in ABI)
+      const leverageParamsArray = [
+        aTokenAddress,
+        variableDebtTokenAddress,
+        network.weth,
+        network.usdc,
+        scenario.collateralAmount,
+        leverageData.flashloanAmount,
+        swapData,
+      ];
 
-      const tx = await leverageLoop.executeLeverageLoop(leverageParams);
+      const tx = await leverageLoop.executeLeverageLoop(leverageParamsArray);
       await tx.wait();
 
       console.log(`✅ Leverage scenario completed successfully`);
@@ -312,14 +358,14 @@ export class ForkTestUtils {
       const initialCollateralAmount: bigint = await aTokenCollateral.balanceOf(
         user
       );
-      const initialDebtAmount: bigint = await (
-        await ethers.getContractAt(
-          this.getVariableDebtTokenABI(),
-          await (
-            await context.dataProvider.getReserveTokensAddresses(network.weth)
-          ).then(([, , vAddr]) => vAddr)
-        )
-      ).balanceOf(user);
+      const reserveTokens: [string, string, string] =
+        await context.dataProvider.getReserveTokensAddresses(network.weth);
+      const vDebtAddr: string = reserveTokens[2];
+      const vDebtContract = await ethers.getContractAt(
+        this.getVariableDebtTokenABI(),
+        vDebtAddr
+      );
+      const initialDebtAmount: bigint = await vDebtContract.balanceOf(user);
 
       // Build swap data for deleverage (collateral -> borrow asset) using new API
       const leverageLoopAddress = await leverageLoop.getAddress();
@@ -329,7 +375,7 @@ export class ForkTestUtils {
         withdrawAmount.toString(), // fromAmount
         0.01, // slippage (1%)
         leverageLoopAddress, // recipient
-        false, // useMock: false for fork tests
+        false, // use real API for fork tests
         network.chainId // chainId
       );
 
@@ -339,25 +385,27 @@ export class ForkTestUtils {
         initialDebtAmount,
         undefined, // convertCollateralAmount
         undefined, // convertDebtAmount
-        BigInt(Math.floor(collateralPrice * 1e18)), // priceOfCollateral
-        BigInt(Math.floor(borrowPrice * 1e18)), // priceOfDebt
+        collateralPrice, // priceOfCollateral
+        borrowPrice, // priceOfDebt
         collateralDecimals,
         debtDecimals,
         0.0, // targetDeLeverage (not used in this scenario)
-        network.flashloanPremium // Use premium from network config
+        network.flashloanPremium ?? ethers.parseEther("0.0009") // default 9 bps
       );
 
-      const deleverageParams = {
-        aToken: await aTokenCollateral.getAddress(),
-        collateralAsset: network.weth,
-        borrowAsset: network.usdc,
-        repayAmount: repayAmount,
-        flashloanAmount: withdrawAmount,
-        withdrawCollateralAmount: withdrawAmount,
-        swapPathData: swapData,
-      };
+      const deleverageParamsArray = [
+        await aTokenCollateral.getAddress(),
+        network.weth,
+        network.usdc,
+        repayAmount,
+        withdrawAmount,
+        withdrawAmount,
+        swapData,
+      ];
 
-      const tx = await leverageLoop.executeDeleverageLoop(deleverageParams);
+      const tx = await leverageLoop.executeDeleverageLoop(
+        deleverageParamsArray
+      );
       await tx.wait();
 
       console.log(`✅ Deleverage completed successfully`);

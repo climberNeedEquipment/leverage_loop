@@ -24,6 +24,14 @@ const TEST_CONFIGS: TestConfig[] = [
       "hh/test/fork/multi-network.fork.test.ts",
     ],
   },
+  {
+    network: "kaia",
+    rpcUrl: process.env.KAIA_RPC_URL || "https://rpc.ankr.com/kaia",
+    testFiles: [
+      "hh/test/fork/kaia.fork.test.ts",
+      "hh/test/fork/multi-network.fork.test.ts",
+    ],
+  },
 ];
 
 async function runForkTest(config: TestConfig): Promise<void> {
@@ -38,20 +46,30 @@ async function runForkTest(config: TestConfig): Promise<void> {
     try {
       console.log(`📋 Running test file: ${testFile}`);
 
-      const command = [
-        "npx hardhat test",
-        testFile,
-        `--network hardhat`,
-        config.rpcUrl ? `--fork ${config.rpcUrl}` : "",
-        config.blockNumber ? `--fork-block-number ${config.blockNumber}` : "",
-      ]
+      // Rely on Hardhat config (FORK_NETWORK + networkConfigs) for forking settings.
+      // Passing --fork flags to `hardhat test` is not supported across all versions.
+      const command = ["npx hardhat test", testFile, `--network hardhat`]
         .filter(Boolean)
         .join(" ");
 
       const env = {
         ...process.env,
         TEST_NETWORKS: config.network,
-        USE_MOCK_EISEN_API: "false", // Use mock for testing
+        USE_MOCK_EISEN_API: "false",
+        FORK_NETWORK: config.network,
+        // Provide RPC url to hardhat.config via networkConfigs
+        KAIA_RPC_URL:
+          config.network === "kaia" && config.rpcUrl
+            ? config.rpcUrl
+            : process.env.KAIA_RPC_URL,
+        BASE_RPC_URL:
+          config.network === "base" && config.rpcUrl
+            ? config.rpcUrl
+            : process.env.BASE_RPC_URL,
+        SONEIUM_RPC_URL:
+          config.network === "soneium" && config.rpcUrl
+            ? config.rpcUrl
+            : process.env.SONEIUM_RPC_URL,
       };
 
       const { stdout, stderr } = await execAsync(command, { env });

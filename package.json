@@ -7,7 +7,7 @@
     "test": "hardhat test --network hardhat",
     "test:fork:soneium": "hardhat test hh/test/fork/soneium.fork.test.ts --network hardhat",
     "test:fork:multi": "TEST_NETWORKS=base,soneium hardhat test hh/test/fork/multi-network.fork.test.ts --network hardhat",
-    "test:fork:all": "ts-node hh/scripts/run-fork-tests.ts",
+    "test:fork:kaia": "FORK_NETWORK=kaia hardhat test hh/test/fork/kaia.fork.test.ts --network hardhat",
     "test:leverage": "hardhat test hh/test/leverage.deleverage.fork.ts --network hardhat"
   },
   "devDependencies": {

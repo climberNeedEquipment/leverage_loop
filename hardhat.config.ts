@@ -18,12 +18,14 @@ const FORK_NETWORK = process.env.FORK_NETWORK || ""; // e.g., "base", "soneium",
 
 let forkingUrl: string | undefined;
 let forkingBlockNumber: number | undefined;
+let hardhatChainId: number | undefined;
 
 if (FORK_NETWORK) {
   const config = networkConfigs[FORK_NETWORK.toLowerCase()];
   if (config) {
     forkingUrl = config.rpcUrl;
     forkingBlockNumber = config.blockNumber;
+    hardhatChainId = config.chainId; // Align chainId with forked network (e.g., Kaia 8217)
   } else {
     console.warn(
       `Warning: FORK_NETWORK '${FORK_NETWORK}' not found in networkConfigs.`
@@ -38,8 +40,7 @@ if (FORK_NETWORK) {
 const hardhatForkingConfig = forkingUrl
   ? {
       url: forkingUrl,
-      blockNumber: forkingBlockNumber, // Re-add blockNumber for better context
-      hardfork: "cancun", // Default to cancun, tests will skip if not compatible
+      blockNumber: forkingBlockNumber,
     }
   : undefined;
 
@@ -73,7 +74,13 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
+      chainId: 1,
+      hardfork: "shanghai",
       forking: hardhatForkingConfig,
+    },
+    localhost: {
+      url: "http://127.0.0.1:8545",
+      chainId: 8217,
     },
   },
   mocha: { timeout: 120000 },
