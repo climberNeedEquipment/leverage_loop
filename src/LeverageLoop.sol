@@ -4,6 +4,8 @@ pragma solidity ^0.8.13;
 import "./interfaces/IFlashLoanReceiver.sol";
 import "./interfaces/IAaveV3Pool.sol";
 import "./interfaces/IERC20.sol";
+import "./interfaces/IPancakeV3Pool.sol";
+import "./interfaces/IPancakeV3FlashCallback.sol";
 import "./libs/SafeTransferLib.sol";
 import {ERC20 as SoladyERC20} from "solady/src/tokens/ERC20.sol";
 import "./errors/GenericErrors.sol";
@@ -20,7 +22,7 @@ import "./libs/UniERC20.sol";
  *      5. Repeat process to increase leverage
  *      6. Repay flashloan
  */
-contract LeverageLoop is IFlashLoanReceiver {
+contract LeverageLoop is IPancakeV3FlashCallback {
     using UniERC20 for address;
     // Constants
     uint256 public constant VARIABLE_INTEREST_RATE_MODE = 2;
@@ -68,6 +70,7 @@ contract LeverageLoop is IFlashLoanReceiver {
         address variableDebtAsset; // Variable debt asset to borrow
         address collateralAsset; // Asset to use as collateral (aka supply asset)
         address borrowAsset; // Asset to borrow
+        address pancakePool; // Pancake V3 pool to flash from (pair address)
         uint256 collateralAmount; // Amount of collateral to transferFrom user to this contract
         uint256 flashloanAmount; // Offchain-calculated flashloan amount for supply asset
         bytes swapPathData; // Encoded EisenRouter for borrow->collateral swap
@@ -77,6 +80,7 @@ contract LeverageLoop is IFlashLoanReceiver {
         address aToken; // aToken to withdraw from
         address collateralAsset; // Asset currently used as collateral
         address borrowAsset; // Current borrowed asset to be repaid
+        address pancakePool; // Pancake V3 pool to flash from (pair address)
         uint256 repayAmount; // Amount of debt to repay
         uint256 flashloanAmount; // Offchain-calculated flashloan amount equal to repay amount
         uint256 withdrawCollateralAmount; // Amount of collateral to withdraw after repay for flashloan
@@ -121,35 +125,42 @@ contract LeverageLoop is IFlashLoanReceiver {
             abi.encode(params)
         );
 
-        uint256 supplyAmount = SoladyERC20(params.aToken).balanceOf(msg.sender);
-        uint256 borrowAmount = SoladyERC20(params.variableDebtAsset).balanceOf(
+        uint256 preAToken = SoladyERC20(params.aToken).balanceOf(msg.sender);
+        uint256 preDebt = SoladyERC20(params.variableDebtAsset).balanceOf(
             msg.sender
         );
 
-        // Execute flashloan via Eisen router (this contract is the initiator/receiver)
-        address[] memory assets1 = new address[](1);
-        assets1[0] = params.borrowAsset;
-        uint256[] memory amounts1 = new uint256[](1);
-        amounts1[0] = params.flashloanAmount;
-        uint256[] memory modes1 = new uint256[](1);
-        modes1[0] = 0;
-        aavePool.flashLoan(
+        // Execute flash via Pancake V3 pool
+        address pool = params.pancakePool;
+        if (pool == address(0)) revert GenericErrors.InvalidAddress();
+        address token0 = IPancakeV3Pool(pool).token0();
+        address token1 = IPancakeV3Pool(pool).token1();
+        uint256 amount0;
+        uint256 amount1;
+        if (params.borrowAsset == token0) {
+            amount0 = params.flashloanAmount;
+            amount1 = 0;
+        } else if (params.borrowAsset == token1) {
+            amount0 = 0;
+            amount1 = params.flashloanAmount;
+        } else {
+            revert GenericErrors.InvalidFlashloanAsset();
+        }
+
+        IPancakeV3Pool(pool).flash(
             address(this),
-            assets1,
-            amounts1,
-            modes1,
-            address(0),
-            flashloanParams,
-            REFERRAL_CODE
+            amount0,
+            amount1,
+            abi.encode(flashloanParams, amount0, amount1)
         );
 
-        supplyAmount =
-            SoladyERC20(params.aToken).balanceOf(address(this)) -
-            supplyAmount;
+        uint256 postAToken = SoladyERC20(params.aToken).balanceOf(msg.sender);
+        uint256 postDebt = SoladyERC20(params.variableDebtAsset).balanceOf(
+            msg.sender
+        );
 
-        borrowAmount =
-            borrowAmount -
-            SoladyERC20(params.variableDebtAsset).balanceOf(address(this));
+        uint256 supplyAmount = postAToken - preAToken;
+        uint256 borrowAmount = postDebt - preDebt;
 
         emit LeverageLoopExecuted(
             msg.sender,
@@ -177,20 +188,28 @@ contract LeverageLoop is IFlashLoanReceiver {
             abi.encode(params)
         );
 
-        address[] memory assets2 = new address[](1);
-        assets2[0] = params.collateralAsset;
-        uint256[] memory amounts2 = new uint256[](1);
-        amounts2[0] = params.flashloanAmount;
-        uint256[] memory modes2 = new uint256[](1);
-        modes2[0] = 0;
-        aavePool.flashLoan(
+        // Execute flash via Pancake V3 pool (borrow collateral asset)
+        address pool = params.pancakePool;
+        if (pool == address(0)) revert GenericErrors.InvalidAddress();
+        address token0 = IPancakeV3Pool(pool).token0();
+        address token1 = IPancakeV3Pool(pool).token1();
+        uint256 amount0;
+        uint256 amount1;
+        if (params.collateralAsset == token0) {
+            amount0 = params.flashloanAmount;
+            amount1 = 0;
+        } else if (params.collateralAsset == token1) {
+            amount0 = 0;
+            amount1 = params.flashloanAmount;
+        } else {
+            revert GenericErrors.InvalidFlashloanAsset();
+        }
+
+        IPancakeV3Pool(pool).flash(
             address(this),
-            assets2,
-            amounts2,
-            modes2,
-            address(0),
-            flashloanParams,
-            REFERRAL_CODE
+            amount0,
+            amount1,
+            abi.encode(flashloanParams, amount0, amount1)
         );
 
         emit DeleverageLoopExecuted(
@@ -202,113 +221,78 @@ contract LeverageLoop is IFlashLoanReceiver {
         );
     }
 
-    /**
-     * @notice Callback function called by flashloan provider
-     * @param assets The assets being flashloaned
-     * @param amounts The amounts being flashloaned
-     * @param premiums The premiums/fees for the flashloan
-     * @param initiator The initiator of the flashloan
-     * @param params Additional parameters
-     */
-    function executeOperation(
-        address[] calldata assets,
-        uint256[] calldata amounts,
-        uint256[] calldata premiums,
-        address initiator,
-        bytes calldata params
-    ) external override returns (bool) {
-        if (msg.sender != address(aavePool)) {
-            revert GenericErrors.NotAuthorized();
-        }
-        if (initiator != address(this)) {
-            revert GenericErrors.InvalidInitiator();
-        }
+    // Pancake V3 flash callback
+    function pancakeV3FlashCallback(
+        uint256 fee0,
+        uint256 fee1,
+        bytes calldata data
+    ) external override {
+        // Decode inner payload and the requested amounts
+        (bytes memory inner, uint256 amount0, uint256 amount1) = abi.decode(
+            data,
+            (bytes, uint256, uint256)
+        );
 
-        // Decode action and dispatch
         (uint8 action, address user, bytes memory actionParams) = abi.decode(
-            params,
+            inner,
             (uint8, address, bytes)
         );
 
+        address pool = msg.sender;
+        // Determine the borrowed asset and premium
         if (action == ACTION_LEVERAGE) {
             LeverageParams memory leverageParams = abi.decode(
                 actionParams,
                 (LeverageParams)
             );
 
+            // Validate that pool matches params
+            if (pool != leverageParams.pancakePool)
+                revert GenericErrors.NotAuthorized();
+
+            address flashAsset = amount0 > 0
+                ? IPancakeV3Pool(pool).token0()
+                : IPancakeV3Pool(pool).token1();
+            uint256 flashAmount = amount0 > 0 ? amount0 : amount1;
+            uint256 premium = amount0 > 0 ? fee0 : fee1;
+
             _executeLeverageLogic(
-                assets[0],
-                amounts[0],
-                premiums[0],
+                flashAsset,
+                flashAmount,
+                premium,
                 leverageParams,
                 user
             );
 
-            // Approve flashloan repayment
-            IERC20(assets[0]).approve(
-                address(aavePool),
-                amounts[0] + premiums[0]
-            );
-
-            // Send any excess supply asset (beyond repayment) back to the user immediately
-            uint256 balAfter = IERC20(assets[0]).balanceOf(address(this));
-            if (balAfter > amounts[0] + premiums[0]) {
-                IERC20(assets[0]).transfer(
-                    user,
-                    balAfter - amounts[0] - premiums[0]
-                );
-            }
-
-            // Also forward any stray borrow asset balance to the user
-            if (leverageParams.borrowAsset != assets[0]) {
-                uint256 borrowBal = IERC20(leverageParams.borrowAsset)
-                    .balanceOf(address(this));
-                if (borrowBal > 0) {
-                    IERC20(leverageParams.borrowAsset).transfer(
-                        user,
-                        borrowBal
-                    );
-                }
-            }
+            // Repay pool via transfer, not approve
+            IERC20(flashAsset).transfer(pool, flashAmount + premium);
         } else if (action == ACTION_DELEVERAGE) {
             DeleverageParams memory dlvParams = abi.decode(
                 actionParams,
                 (DeleverageParams)
             );
-            if (assets[0] != dlvParams.collateralAsset) {
-                revert GenericErrors.InvalidFlashloanAsset();
-            }
-            if (amounts[0] != dlvParams.flashloanAmount) {
-                revert GenericErrors.InvalidFlashloanAmount();
-            }
+            if (pool != dlvParams.pancakePool)
+                revert GenericErrors.NotAuthorized();
+
+            address flashAsset = amount0 > 0
+                ? IPancakeV3Pool(pool).token0()
+                : IPancakeV3Pool(pool).token1();
+            uint256 flashAmount = amount0 > 0 ? amount0 : amount1;
+            uint256 premium = amount0 > 0 ? fee0 : fee1;
 
             _executeDeleverageLogic(
-                assets[0],
-                amounts[0],
-                premiums[0],
+                flashAsset,
+                flashAmount,
+                premium,
                 dlvParams,
                 user
             );
 
-            // Return any leftovers to user
-            uint256 debtBal = IERC20(assets[0]).balanceOf(address(this));
-            if (debtBal > amounts[0] + premiums[0]) {
-                IERC20(assets[0]).transfer(
-                    user,
-                    debtBal - amounts[0] - premiums[0]
-                );
-            }
-            uint256 collateralBal = IERC20(dlvParams.collateralAsset).balanceOf(
-                address(this)
-            );
-            if (collateralBal > 0) {
-                IERC20(dlvParams.collateralAsset).transfer(user, collateralBal);
-            }
+            // Repay pool via transfer
+            IERC20(flashAsset).transfer(pool, flashAmount + premium);
         } else {
             revert GenericErrors.InvalidAction();
         }
-
-        return true;
     }
 
     /**
@@ -347,6 +331,9 @@ contract LeverageLoop is IFlashLoanReceiver {
             supplyAmount = SoladyERC20(params.collateralAsset).balanceOf(
                 address(this)
             );
+        } else {
+            // When borrow asset equals collateral, entire flash amount becomes supply amount
+            supplyAmount = flashloanAmount;
         }
 
         // Approve Aave pool to spend collateral
@@ -428,10 +415,7 @@ contract LeverageLoop is IFlashLoanReceiver {
             address(this)
         );
 
-        IERC20(flashloanAsset).approve(
-            address(aavePool),
-            flashloanAmount + premium
-        );
+        // No approval back to pool here; repayment is handled inside Pancake callback via transfer
     }
 
     /**

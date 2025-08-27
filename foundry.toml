@@ -10,7 +10,7 @@ remappings = [
     "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
 ]
 optimizer = true
-vi-ir = true
+via_ir = true
 auto_detect_solc = false
 solc = "0.8.20"
 

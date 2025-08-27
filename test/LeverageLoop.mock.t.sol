@@ -24,7 +24,7 @@ contract LeverageLoopMockTest is Test {
         // Deploy tokens
         weth = new MockERC20Mintable("WETH", "WETH", 18);
         usdc = new MockERC20Mintable("USDC", "USDC", 6);
-        aWETH = new MockAToken(address(weth), "aWETH", "aWETH", 18);
+        aWETH = new MockAToken("aWETH", "aWETH", 18);
         vUSDC = new MockVariableDebtToken("vUSDC", "vUSDC", 6);
 
         // Deploy mocks
@@ -76,6 +76,7 @@ contract LeverageLoopMockTest is Test {
             variableDebtAsset: address(vUSDC),
             collateralAsset: address(weth),
             borrowAsset: address(usdc),
+            pancakePool: address(0x1111111111111111111111111111111111111111),
             collateralAmount: 1 ether,
             flashloanAmount: 2_000e6, // in debt units (USDC)
             swapPathData: swapData
@@ -106,6 +107,9 @@ contract LeverageLoopMockTest is Test {
                 variableDebtAsset: address(vUSDC),
                 collateralAsset: address(weth),
                 borrowAsset: address(usdc),
+                pancakePool: address(
+                    0x1111111111111111111111111111111111111111
+                ),
                 collateralAmount: 1 ether,
                 flashloanAmount: 2_000e6,
                 swapPathData: swapData
@@ -133,6 +137,7 @@ contract LeverageLoopMockTest is Test {
             aToken: address(aWETH),
             collateralAsset: address(weth),
             borrowAsset: address(usdc),
+            pancakePool: address(0x1111111111111111111111111111111111111111),
             repayAmount: 1_000e6, // repay portion of USDC debt
             flashloanAmount: 1 ether, // flashloan WETH to swap to USDC
             withdrawCollateralAmount: 1 ether,
